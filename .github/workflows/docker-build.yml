@@ -306,7 +306,6 @@ jobs:
           ACTION: ${{ steps.set-action.outputs.action }}
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
           UPSTREAM_JELLYFIN: ${{ steps.fetch-jellyfin.outputs.version }}
-          UPSTREAM_JELLYFIN_MAJOR: ${{ steps.fetch-jellyfin.outputs.major }}
           UPSTREAM_COMPUTE: ${{ steps.fetch-intel.outputs.version }}
           UPSTREAM_IGC: ${{ steps.fetch-intel.outputs.igc_version }}
           HAS_DEBS: ${{ steps.fetch-jellyfin.outputs.has_debs }}
@@ -326,7 +325,6 @@ jobs:
           LATEST_NEEDS_PROMOTE="false"
 
           JELLYFIN_VERSION="${MANUAL_JELLYFIN:-$UPSTREAM_JELLYFIN}"
-          JELLYFIN_MAJOR="${UPSTREAM_JELLYFIN_MAJOR:-7}"
           COMPUTE_VERSION="${MANUAL_COMPUTE:-$UPSTREAM_COMPUTE}"
           IGC_VERSION="${MANUAL_IGC:-$UPSTREAM_IGC}"
 
@@ -357,7 +355,6 @@ jobs:
 
               if [[ "$JELLYFIN_CHANGED" != "true" && -n "$STORED_JELLYFIN" ]]; then
                 JELLYFIN_VERSION="$STORED_JELLYFIN"
-                JELLYFIN_MAJOR=$(echo "$JELLYFIN_VERSION" | cut -d'.' -f1)
               fi
               if [[ "$COMPUTE_CHANGED" != "true" && -n "$STORED_COMPUTE" ]]; then
                 COMPUTE_VERSION="$STORED_COMPUTE"
@@ -434,6 +431,9 @@ jobs:
             echo "::error::Missing required version(s): jellyfin=$JELLYFIN_VERSION compute=$COMPUTE_VERSION igc=$IGC_VERSION"
             SHOULD_BUILD="false"
           fi
+
+          JELLYFIN_MAJOR=$(echo "$JELLYFIN_VERSION" | cut -d'.' -f1)
+          JELLYFIN_MAJOR="${JELLYFIN_MAJOR:-7}"
 
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
           echo "jellyfin_version=$JELLYFIN_VERSION" >> "$GITHUB_OUTPUT"
