@@ -9,7 +9,7 @@ DOCKERFILE_NAME="Dockerfile.$REPO_NAME"
 # Check for base image file
 if [ -e ./resources/build_data/BASE_IMAGE ]; then
   BASE_IMAGE=$(cat "./resources/build_data/BASE_IMAGE")
-  BASE_IMAGE="FROM debian:${BASE_IMAGE}"
+  BASE_IMAGE="FROM ${BASE_IMAGE}"
 else
   echo "Could not find Base Image to build Image on. Exiting..."
   exit 1

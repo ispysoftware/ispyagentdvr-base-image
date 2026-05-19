@@ -106,6 +106,7 @@ env:
   GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/ispyagentdvr-base-image', github.repository_owner) }}
   DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64,linux/arm64,linux/arm/v7' }}
   DEBIAN_BASE: ${{ vars.DEBIAN_BASE || 'trixie-slim' }}
+  DEFAULT_BASE_IMAGE: ${{ vars.DEFAULT_BASE_IMAGE || format('debian:{0}', vars.DEBIAN_BASE || 'trixie-slim') }}
 
 jobs:
   # ===========================================================================
@@ -587,7 +588,7 @@ jobs:
           set -euo pipefail
 
           mkdir -p resources/build_data
-          echo "${DEBIAN_BASE}" > resources/build_data/BASE_IMAGE
+          echo "${DEFAULT_BASE_IMAGE}" > resources/build_data/BASE_IMAGE
           echo "${JELLYFIN_VERSION}" > resources/build_data/JELLYFIN_FFMPEG_VERSION
           echo "${JELLYFIN_MAJOR}" > resources/build_data/JELLYFIN_FFMPEG_MAJOR_VERSION
           echo "${COMPUTE_VERSION}" > resources/build_data/COMPUTE_VERSION
@@ -614,7 +615,7 @@ jobs:
         id: base-digest
         if: steps.check-tag.outputs.skip_build != 'true'
         run: |
-          BASE="debian:${DEBIAN_BASE}"
+          BASE="${DEFAULT_BASE_IMAGE}"
           DIGEST=$(crane digest "$BASE" 2>/dev/null || echo "unknown")
           echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
 
