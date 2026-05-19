@@ -35,6 +35,7 @@ on:
           - build
           - promote-latest
           - force-promote-latest
+          - retag-latest
           - sync-registries
         default: auto-check
       jellyfin_version:
@@ -59,6 +60,10 @@ on:
         required: false
         type: boolean
         default: true
+      retag_source:
+        description: 'Existing tag to promote as latest (for retag-latest action)'
+        required: false
+        type: string
       push_to_dockerhub:
         description: 'Push to Docker Hub'
         required: false
@@ -393,6 +398,16 @@ jobs:
               fi
               ;;
 
+            retag-latest)
+              SHOULD_BUILD="false"
+              LATEST_NEEDS_PROMOTE="true"
+              RETAG_SOURCE="${{ github.event.inputs.retag_source }}"
+              if [[ -z "$RETAG_SOURCE" ]]; then
+                echo "::error::retag-latest requires retag_source input"
+                LATEST_NEEDS_PROMOTE="false"
+              fi
+              ;;
+
             sync-registries)
               SHOULD_BUILD="false"
               if [[ -z "$JELLYFIN_VERSION" && -n "$STORED_JELLYFIN" ]]; then
@@ -404,14 +419,18 @@ jobs:
               ;;
           esac
 
-          if [[ "$FORCE_BUILD" == "true" && "$ACTION" != "promote-latest" && "$ACTION" != "force-promote-latest" && "$ACTION" != "sync-registries" ]]; then
+          if [[ "$FORCE_BUILD" == "true" && "$ACTION" != "promote-latest" && "$ACTION" != "force-promote-latest" && "$ACTION" != "retag-latest" && "$ACTION" != "sync-registries" ]]; then
             SHOULD_BUILD="true"
             LATEST_NEEDS_PROMOTE="true"
           fi
 
-          IMAGE_TAG="${DEBIAN_BASE}-vlc-jellyfin-ffmpeg-${JELLYFIN_VERSION}-intel-${COMPUTE_VERSION}"
+          if [[ "$ACTION" == "retag-latest" ]]; then
+            IMAGE_TAG="${RETAG_SOURCE}"
+          else
+            IMAGE_TAG="${DEBIAN_BASE}-vlc-jellyfin-ffmpeg-${JELLYFIN_VERSION}-intel-${COMPUTE_VERSION}"
+          fi
 
-          if [[ -z "$JELLYFIN_VERSION" || -z "$COMPUTE_VERSION" || -z "$IGC_VERSION" ]]; then
+          if [[ "$ACTION" != "retag-latest" && ( -z "$JELLYFIN_VERSION" || -z "$COMPUTE_VERSION" || -z "$IGC_VERSION" ) ]]; then
             echo "::error::Missing required version(s): jellyfin=$JELLYFIN_VERSION compute=$COMPUTE_VERSION igc=$IGC_VERSION"
             SHOULD_BUILD="false"
           fi
@@ -871,6 +890,7 @@ jobs:
       && (
         needs.check-releases.outputs.action_type == 'promote-latest'
         || needs.check-releases.outputs.action_type == 'force-promote-latest'
+        || needs.check-releases.outputs.action_type == 'retag-latest'
         || (
           needs.check-releases.outputs.action_type == 'auto-check'
           && needs.check-releases.outputs.latest_needs_promote == 'true'
@@ -926,7 +946,7 @@ jobs:
           fi
 
           LATEST_DIGEST=$(crane digest "$GHCR_DST" 2>/dev/null || echo "")
-          if [[ "$SRC_DIGEST" == "$LATEST_DIGEST" && "$ACTION" != "force-promote-latest" ]]; then
+          if [[ "$SRC_DIGEST" == "$LATEST_DIGEST" && "$ACTION" != "force-promote-latest" && "$ACTION" != "retag-latest" ]]; then
             echo "Latest already points to ${IMAGE_TAG} (digest: $SRC_DIGEST) — skipping"
             echo "promoted_version=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
             echo "promoted_digest=$SRC_DIGEST" >> "$GITHUB_OUTPUT"
