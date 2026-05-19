@@ -9,7 +9,8 @@ arch=$(uname -m)
 VERSION_OS=$(grep '^ID=' /etc/os-release | cut -d= -f2 | tr -d '"')
 VERSION_CODENAME=$(grep '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2 | tr -d '"')
 DPKG_ARCHITECTURE="$(dpkg --print-architecture)"
-JELLYFIN_FFMPEG_MAJOR_VERSION="$(cat /resources/build_data/JELLYFIN_FFMPEG_MAJOR_VERSION)"
+JELLYFIN_FFMPEG_VERSION="$(cat /resources/build_data/JELLYFIN_FFMPEG_VERSION 2>/dev/null || echo '')"
+JELLYFIN_FFMPEG_MAJOR_VERSION="$(echo "$JELLYFIN_FFMPEG_VERSION" | cut -d'.' -f1)"
 
 echo "export arch=\"$arch\"" > /etc/profile.d/env_vars.sh
 echo "export VERSION_OS=\"$VERSION_OS\"" >> /etc/profile.d/env_vars.sh

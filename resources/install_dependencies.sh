@@ -4,12 +4,14 @@
 set -ex
 
 echo "**** Installing Dependencies ****"
-# Install packages non-interactively with minimal recommendations
-DEBIAN_FRONTEND=noninteractive apt-get update && \
-apt-get install -y --no-install-recommends --no-install-suggests \
+
+LIBICU=$(apt-cache search '^libicu[0-9]+$' | awk '{print $1}' | sort -V | tail -1)
+echo "**** Resolved ICU runtime package: ${LIBICU} ****"
+
+DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     sudo \
     gosu \
-    libicu-dev \
+    "${LIBICU}" \
     ncurses-bin \
     alsa-utils \
     curl \
@@ -22,6 +24,4 @@ apt-get install -y --no-install-recommends --no-install-suggests \
     locales \
     tzdata \
     libgdiplus \
-    g++ \
-    gcc \
     adduser

@@ -3,7 +3,6 @@ set -ex
 
 default_ffmpeg() {
     echo "***** Installing Default FFMPEG from Debian repo *****"
-    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update
     apt-get -t sid install -y --no-install-recommends --no-install-suggests ffmpeg libldap-common
     ln -sfv /usr/bin/ffmpeg "${LIB_DIRECTORY}/"
     echo "**** Default FFMPEG installation completed ****"

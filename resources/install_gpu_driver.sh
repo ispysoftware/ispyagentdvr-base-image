@@ -109,8 +109,14 @@ amd64_driver(){
     ### Note SID is used because intel drivers require much more recent libc6 than available in backports
     echo "Installing drivers from Debian sources:"
 
-   	DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
-    libc6 mesa-va-drivers mesa-vulkan-drivers mesa-vdpau-drivers vulkan-tools vdpau-driver-all nvidia-vaapi-driver libnvidia-encode1 openssl ocl-icd-libopencl1 vainfo
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    libc6 openssl
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
+    mesa-va-drivers mesa-vulkan-drivers mesa-vdpau-drivers vulkan-tools vdpau-driver-all ocl-icd-libopencl1 vainfo
+
+    DEBIAN_FRONTEND=noninteractive apt-get install -t sid -y --no-install-recommends --no-install-suggests \
+    nvidia-vaapi-driver libnvidia-encode1 || echo "WARNING: NVIDIA VAAPI packages skipped due to dependency conflict"
 
     echo "Download & installing Intel Drivers:"
     mkdir intel-compute-runtime

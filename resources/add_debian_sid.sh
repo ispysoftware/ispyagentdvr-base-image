@@ -13,4 +13,12 @@ Architectures: ${DPKG_ARCHITECTURE}
 Enabled: yes
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
+
+mkdir -p /etc/apt/preferences.d
+cat <<EOF | tee /etc/apt/preferences.d/sid-pinning
+Package: *
+Pin: release a=unstable
+Pin-Priority: 100
+EOF
+
 apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update
