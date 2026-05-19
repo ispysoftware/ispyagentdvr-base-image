@@ -264,9 +264,7 @@ jobs:
           IGC_VERSION=$(echo "$IGC_TAG" | sed 's/^v//')
 
           if [[ -z "$IGC_VERSION" ]]; then
-            echo "::warning::Could not extract IGC version from compute-runtime release body"
-            IGC_VERSION="${{ vars.IGC_VERSION || '2.28.4' }}"
-            echo "Using fallback IGC version: $IGC_VERSION"
+            echo "::warning::Could not extract IGC version from compute-runtime release body — will use stored state if available"
           fi
 
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
