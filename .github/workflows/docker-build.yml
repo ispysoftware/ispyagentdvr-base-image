@@ -478,19 +478,24 @@ jobs:
             exit 0
           fi
 
+          ACTION_RUNNER="${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-24.04' }}"
+          runner_suffix_for() {
+            case "$1" in
+              linux/amd64)    echo "" ;;
+              linux/arm64)    echo "-arm" ;;
+              linux/arm/v7)   echo "-arm" ;;
+              *)              echo "" ;;
+            esac
+          }
+
           MATRIX="["
           FIRST=true
           IFS=',' read -ra PLAT_ARRAY <<< "$PLATFORMS"
           for PLAT in "${PLAT_ARRAY[@]}"; do
             PLAT=$(echo "$PLAT" | xargs)
             SLUG=$(echo "$PLAT" | sed 's|linux/||; s|/|-|g')
-
-            case "$PLAT" in
-              linux/amd64)  RUNNER="${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-24.04' }}" ;;
-              linux/arm64)  RUNNER="${{ vars.ACTION_RUNNER_ARM_VERSION || 'ubuntu-24.04-arm' }}" ;;
-              linux/arm/v7) RUNNER="${{ vars.ACTION_RUNNER_ARM_VERSION || 'ubuntu-24.04-arm' }}" ;;
-              *)            RUNNER="${{ vars.ACTION_RUNNER_VERSION || 'ubuntu-24.04' }}" ;;
-            esac
+            SUFFIX=$(runner_suffix_for "$PLAT")
+            RUNNER="${ACTION_RUNNER}${SUFFIX}"
 
             if [[ "$FIRST" != "true" ]]; then MATRIX+=","; fi
             MATRIX+="{\"platform\":\"$PLAT\",\"platform_slug\":\"$SLUG\",\"runner\":\"$RUNNER\"}"
