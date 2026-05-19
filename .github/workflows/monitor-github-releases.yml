@@ -1,0 +1,239 @@
+name: Monitor upstream GitHub releases
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Action to perform
+        required: true
+        type: choice
+        options: [auto-check, build]
+        default: auto-check
+  repository_dispatch:
+    types: [ispyagentdvr-base-image-cron]
+
+permissions:
+  contents: write
+  actions: read
+
+env:
+  TZ: ${{ vars.TZ || 'Asia/Dhaka' }}
+  GHCR_REPO: ${{ vars.GHCR_REPO || format('ghcr.io/{0}/ispyagentdvr-base-image', github.repository_owner) }}
+  DOCKERHUB_REPO: ${{ vars.DOCKERHUB_REPO || 'mekayelanik/ispyagentdvr-base-image' }}
+  DEFAULT_PLATFORMS: ${{ vars.DEFAULT_PLATFORMS || 'linux/amd64' }}
+
+jobs:
+  quick-check:
+    name: Check upstream releases
+    runs-on: ubuntu-latest
+    outputs:
+      should_run: ${{ steps.check.outputs.should_run }}
+      intel_tag: ${{ steps.fetch.outputs.intel_tag }}
+      jellyfin_tag: ${{ steps.fetch.outputs.jellyfin_tag }}
+      date_tag: ${{ steps.fetch.outputs.date_tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install release-check dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y jq gh
+
+      - name: Fetch upstream release tags
+        id: fetch
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # Fetch latest tag for intel compute-runtime
+          INTEL_TAG=$(curl -sSf -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/intel/compute-runtime/releases/latest" \
+            | jq -r '.tag_name // ""') || INTEL_TAG=""
+
+          # Fetch latest tag for jellyfin-ffmpeg
+          JELLY_TAG=$(curl -sSf -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/jellyfin/jellyfin-ffmpeg/releases/latest" \
+            | jq -r '.tag_name // ""') || JELLY_TAG=""
+
+          DATE_TAG=$(date +%Y%m%d)
+
+          echo "intel_tag=$INTEL_TAG" >> $GITHUB_OUTPUT
+          echo "jellyfin_tag=$JELLY_TAG" >> $GITHUB_OUTPUT
+          echo "date_tag=$DATE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Compare with stored state
+        id: check
+        env:
+          STATE_BRANCH: pipeline-state
+          STATE_FILE: state.json
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" && "${{ github.event.inputs.action }}" != "auto-check" ]]; then
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Read stored state (if any)
+          STORED=""
+          STORED=$(gh api "repos/${{ github.repository }}/contents/${STATE_FILE}?ref=${STATE_BRANCH}" --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || true)
+          CURRENT_JSON=$(jq -n --arg intel "${{ steps.fetch.outputs.intel_tag }}" --arg jelly "${{ steps.fetch.outputs.jellyfin_tag }}" --arg date "${{ steps.fetch.outputs.date_tag }}" '{intel:$intel, jellyfin:$jelly, checked:$date}')
+
+          if [[ -z "$STORED" ]]; then
+            echo "No stored state — trigger build"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          STORED_INTEL=$(echo "$STORED" | jq -r '.intel // ""')
+          STORED_JELLY=$(echo "$STORED" | jq -r '.jellyfin // ""')
+
+          if [[ "$STORED_INTEL" != "${{ steps.fetch.outputs.intel_tag }}" || "$STORED_JELLY" != "${{ steps.fetch.outputs.jellyfin_tag }}" ]]; then
+            echo "Upstream changed: $STORED_INTEL/$STORED_JELLY -> ${{ steps.fetch.outputs.intel_tag }}/${{ steps.fetch.outputs.jellyfin_tag }}"
+            echo "should_run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "No change in upstream releases — skipping" 
+            echo "should_run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  build:
+    name: Run build candidate
+    needs: quick-check
+    if: needs.quick-check.outputs.should_run == 'true'
+    runs-on: ubuntu-latest
+    env:
+      IGC_VERSION: ${{ vars.IGC_VERSION || '2.28.4' }}
+      BASE_IMAGE: ${{ vars.BASE_IMAGE || 'trixie-slim' }}
+      HWACCEL_BASE_IMAGE: ${{ vars.HWACCEL_BASE_IMAGE || 'trixie-slim' }}
+      IMAGE_PREFIX: 'ispyagentdvr-'
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list
+          sudo apt-get update
+          sudo apt-get install -y jq gh
+
+      - name: Set up Buildx (ultra-optimized)
+        uses: docker/setup-buildx-action@v4
+        with:
+          install: true
+          name: ultra-optimized
+          garbage-collect: true
+
+      - name: Login to GitHub Container Registry (GHCR) (with retry)
+        uses: nick-fields/retry@v4
+        env:
+          REG_USER: ${{ github.actor }}
+          REG_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          timeout_seconds: 30
+          max_attempts: 5
+          retry_wait_seconds: 2
+          warning_on_retry: true
+          shell: bash
+          command: |
+            set -euo pipefail
+            printf '%s' "$REG_TOKEN" | docker login ghcr.io \
+              --username "$REG_USER" --password-stdin
+
+      - name: Login to Docker Hub (with retry)
+        uses: nick-fields/retry@v4
+        env:
+          REG_USER: ${{ secrets.DOCKERHUB_USERNAME }}
+          REG_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        with:
+          timeout_seconds: 30
+          max_attempts: 5
+          retry_wait_seconds: 2
+          warning_on_retry: true
+          shell: bash
+          command: |
+            set -euo pipefail
+            printf '%s' "$REG_TOKEN" | docker login docker.io \
+              --username "$REG_USER" --password-stdin
+
+      - name: Validate workflow YAML
+        run: |
+          sudo apt-get install -y python3-yaml
+          python3 - <<'PY'
+          import yaml
+          import sys
+          yaml.safe_load(open('.github/workflows/monitor-github-releases.yml', 'r'))
+          print('workflow_yaml_ok')
+          PY
+
+      - name: Checkout (for build)
+        uses: actions/checkout@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Prepare build data and Dockerfile
+        id: prepare
+        run: |
+          set -euo pipefail
+          DATE_TAG='${{ needs.quick-check.outputs.date_tag }}'
+          COMPUTE_VERSION="${{ needs.quick-check.outputs.intel_tag }}"
+          JELLYFIN_FFMPEG_VERSION="${{ needs.quick-check.outputs.jellyfin_tag }}"
+          JELLYFIN_FFMPEG_MAJOR_VERSION="$(echo "$JELLYFIN_FFMPEG_VERSION" | sed 's/^v//' | cut -d'.' -f1)"
+          TAG_VERSION="${HWACCEL_BASE_IMAGE}-vlc-jellyfin-ffmpeg-${JELLYFIN_FFMPEG_VERSION#v}-intel-${COMPUTE_VERSION#v}"
+          PRIMARY_TAG="${IMAGE_PREFIX}${TAG_VERSION}"
+          DATE_TAGGED="${PRIMARY_TAG}-${DATE_TAG}"
+          ALT_TAG="${IMAGE_PREFIX}${HWACCEL_BASE_IMAGE}-jellyfin-ffmpeg-${JELLYFIN_FFMPEG_VERSION#v}"
+
+          mkdir -p resources/build_data
+          echo "${HWACCEL_BASE_IMAGE}" > resources/build_data/BASE_IMAGE
+          echo "${COMPUTE_VERSION#v}" > resources/build_data/COMPUTE_VERSION
+          echo "${IGC_VERSION}" > resources/build_data/IGC_VERSION
+          echo "${JELLYFIN_FFMPEG_VERSION#v}" > resources/build_data/JELLYFIN_FFMPEG_VERSION
+          echo "${JELLYFIN_FFMPEG_MAJOR_VERSION}" > resources/build_data/JELLYFIN_FFMPEG_MAJOR_VERSION
+          touch resources/build_data/vlc
+          echo "Build started on: $(date -u +'%Y-%m-%dT%H:%M:%SZ')" > resources/build_data/base-image-timestamp
+
+          bash ./DockerfileModifier.sh
+
+          echo "primary_tag=$PRIMARY_TAG" >> "$GITHUB_OUTPUT"
+          echo "date_tagged=$DATE_TAGGED" >> "$GITHUB_OUTPUT"
+          echo "alt_tag=$ALT_TAG" >> "$GITHUB_OUTPUT"
+
+          echo "Primary tag: $PRIMARY_TAG"
+          echo "Date tag: $DATE_TAGGED"
+          echo "Alt tag: $ALT_TAG"
+
+      - name: Build and push image
+        run: |
+          set -euo pipefail
+          docker buildx build \
+            --builder ultra-optimized \
+            --platform "${{ env.DEFAULT_PLATFORMS }}" \
+            --file Dockerfile.ispyagentdvr-base-image \
+            --push \
+            --tag "${{ env.DOCKERHUB_REPO }}:${{ steps.prepare.outputs.primary_tag }}" \
+            --tag "${{ env.DOCKERHUB_REPO }}:${{ steps.prepare.outputs.date_tagged }}" \
+            --tag "${{ env.DOCKERHUB_REPO }}:${{ steps.prepare.outputs.alt_tag }}" \
+            --tag "${{ env.GHCR_REPO }}:${{ steps.prepare.outputs.primary_tag }}" \
+            --tag "${{ env.GHCR_REPO }}:${{ steps.prepare.outputs.date_tagged }}" \
+            --tag "${{ env.GHCR_REPO }}:${{ steps.prepare.outputs.alt_tag }}" \
+            .
+
+      - name: Update pipeline state branch
+        env:
+          STATE_BRANCH: pipeline-state
+          STATE_FILE: state.json
+          INTEL: ${{ needs.quick-check.outputs.intel_tag }}
+          JELLY: ${{ needs.quick-check.outputs.jellyfin_tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+
+          # Create or update pipeline-state branch with state file
+          git checkout -b $STATE_BRANCH || git checkout $STATE_BRANCH
+          cat > $STATE_FILE <<JSON
+          { "intel": "${INTEL}", "jellyfin": "${JELLY}", "checked": "$(date -u +%Y-%m-%dT%H:%M:%SZ)" }
+          JSON
+          git add $STATE_FILE
+          git commit -m "Update pipeline state: intel=${INTEL} jellyfin=${JELLY}" || echo "No changes to commit"
+          git push --force origin $STATE_BRANCH
