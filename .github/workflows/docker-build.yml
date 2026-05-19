@@ -22,7 +22,7 @@ name: Docker Build & Publish - Base Image
 
 on:
   repository_dispatch:
-    types: [ispyagentdvr-base-image-cron]
+    types: [ispyagentdvr-base-image-build]
 
   workflow_dispatch:
     inputs:
