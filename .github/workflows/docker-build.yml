@@ -661,6 +661,16 @@ jobs:
           cache-to: type=gha,scope=${{ steps.cache-ref.outputs.scope }},mode=max
           provenance: mode=max
           sbom: true
+          annotations: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.description=iSpy AgentDVR Base Image
+            org.opencontainers.image.licenses=GPL-3.0
+            org.opencontainers.image.title=ispyagentdvr-base-image
+            org.opencontainers.image.url=https://github.com/${{ github.repository }}
+            org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>
+            org.opencontainers.image.vendor=MD. MEKAYEL ANIK
+            dev.mekayelanik.country-of-origin=Bangladesh
+            dev.mekayelanik.message=== Free Palestine ==
 
       - name: Export digest
         if: steps.check-tag.outputs.skip_build != 'true'
@@ -672,7 +682,7 @@ jobs:
 
       - name: Upload digest artifact
         if: steps.check-tag.outputs.skip_build != 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: digest-${{ needs.check-releases.outputs.image_tag }}-${{ matrix.platform_slug }}
           path: /tmp/digests/*
@@ -696,7 +706,7 @@ jobs:
       - name: Download all digests
         id: download-digests
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: /tmp/digests
           pattern: digest-${{ needs.check-releases.outputs.image_tag }}-*
@@ -771,9 +781,19 @@ jobs:
             TAG_ARGS="$TAG_ARGS -t $TAG"
           done
 
+          ANNO_ARGS=()
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.description=iSpy AgentDVR Base Image")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=ispyagentdvr-base-image")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating GHCR manifest..."
-            if docker buildx imagetools create $TAG_ARGS $DIGESTS 2>&1; then
+            if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS $DIGESTS 2>&1; then
               echo "GHCR manifest created successfully"
               break
             fi
@@ -799,9 +819,19 @@ jobs:
             TAG_ARGS="$TAG_ARGS -t $TAG"
           done
 
+          ANNO_ARGS=()
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.source=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.description=iSpy AgentDVR Base Image")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.licenses=GPL-3.0")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.title=ispyagentdvr-base-image")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.url=https://github.com/${{ github.repository }}")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.authors=MD. MEKAYEL ANIK <mekayel.anik@gmail.com>")
+          ANNO_ARGS+=(--annotation "index:org.opencontainers.image.vendor=MD. MEKAYEL ANIK")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.country-of-origin=Bangladesh")
+          ANNO_ARGS+=(--annotation "index:dev.mekayelanik.message=== Free Palestine ==")
           for attempt in 1 2 3 4 5; do
             echo "Attempt $attempt: Creating Docker Hub manifest..."
-            if docker buildx imagetools create $TAG_ARGS "$SOURCE" 2>&1; then
+            if docker buildx imagetools create "${ANNO_ARGS[@]}" $TAG_ARGS "$SOURCE" 2>&1; then
               echo "Docker Hub manifest created successfully"
               break
             fi
