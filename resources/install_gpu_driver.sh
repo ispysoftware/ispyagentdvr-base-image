@@ -104,7 +104,6 @@ install-drivers() {
     fi
 }
 amd64_driver(){
-    LIB_DIRECTORY='/usr/lib/x86_64-linux-gnu'
 #    bash /resources/add_debian_backports.sh
     ### Note SID is used because intel drivers require much more recent libc6 than available in backports
     echo "Installing drivers from Debian sources:"
@@ -153,13 +152,11 @@ amd64_driver(){
 }
 
 arm64_driver() {
-	LIB_DIRECTORY='/usr/lib/aarch64-linux-gnu'
 	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     mesa-va-drivers mesa-vulkan-drivers v4l-utils libdrm2 vulkan-tools libssl-dev libfontconfig1 libfreetype6 vainfo
 }
 
 armv7l_driver() {
-    LIB_DIRECTORY='/usr/lib/arm-linux-gnueabihf'
 	DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     mesa-va-drivers mesa-vulkan-drivers v4l-utils libdrm2 vulkan-tools libatlas3-base libssl-dev libfontconfig1 libfreetype6 libva2 vainfo
 }
