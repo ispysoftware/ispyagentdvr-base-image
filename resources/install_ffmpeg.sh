@@ -1,101 +1,64 @@
 #!/bin/bash
 set -ex
 
-default_ffmpeg() {
-    echo "***** Installing Default FFMPEG from Debian repo *****"
-    apt-get install -y --no-install-recommends --no-install-suggests ffmpeg libldap-common
-    ln -sfv /usr/bin/ffmpeg "${LIB_DIRECTORY}/"
-    echo "**** Default FFMPEG installation completed ****"
-}
+FFMPEG_VERSION_URL="https://files.ispyconnect.com/libs/ffmpeg_version.txt"
+FFMPEG_BASE_URL="https://files.ispyconnect.com/libs"
+AGENTDVR_DIRECTORY="/AgentDVR"
 
-jellyfin_ffmpeg() {
-    echo "***** Installing Jellyfin FFMPEG *****"
-    # Ensure keyrings directory exists
-    mkdir -p /etc/apt/keyrings
+ispy_ffmpeg() {
+    echo "***** Installing iSpy prebuilt FFMPEG *****"
 
-    # Save Jellyfin GPG key directly (no gnupg needed)
-    curl -fsSL https://repo.jellyfin.org/jellyfin_team.gpg.key \
-        -o /etc/apt/keyrings/jellyfin.gpg
-
-    # Detect codename
-    VERSION_CODENAME=$(grep '^VERSION_CODENAME=' /etc/os-release | cut -d= -f2)
-
-    # Add Jellyfin repo
-    cat <<EOF | tee /etc/apt/sources.list.d/jellyfin.sources
-Types: deb
-URIs: https://repo.jellyfin.org/debian
-Suites: ${VERSION_CODENAME}
-Components: main
-Architectures: $(dpkg --print-architecture)
-EOF
-
-    # Allow insecure repo only for Jellyfin
-    cat <<EOF | tee /etc/apt/apt.conf.d/99jellyfin-allow-unsigned
-Acquire::AllowInsecureRepositories "true";
-Acquire::AllowDowngradeToInsecureRepositories "true";
-Acquire::https::repo.jellyfin.org::Verify-Peer "false";
-Acquire::https::repo.jellyfin.org::Verify-Host "false";
-EOF
-
-    # Install Jellyfin FFmpeg
-    JELLYFIN_FFMPEG_MAJOR_VERSION="$(cat /resources/build_data/JELLYFIN_FFMPEG_MAJOR_VERSION)"
-    apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Check-Date=false update
-    apt-get install -y --allow-unauthenticated --no-install-recommends --no-install-suggests \
-        jellyfin-ffmpeg${JELLYFIN_FFMPEG_MAJOR_VERSION}
-
-    echo "****		Copying FFMPEG Library Files to Library destination		****"
-
-    # Only copy dri/ if it exists
-    if [ -d "/usr/share/jellyfin-ffmpeg/lib/dri" ]; then
-        rsync -avh --remove-source-files /usr/share/jellyfin-ffmpeg/lib/dri/ "${LIB_DIRECTORY}/dri/"
-        rm -vrf /usr/share/jellyfin-ffmpeg/lib/dri
+    # Resolve version, e.g. "8.1" — pinned by CI via build_data, else fetch live
+    if [ -f /resources/build_data/FFMPEG_VERSION ]; then
+        FFMPEG_VERSION="$(tr -d '[:space:]' < /resources/build_data/FFMPEG_VERSION)"
+    fi
+    if [ -z "${FFMPEG_VERSION:-}" ]; then
+        FFMPEG_VERSION="$(curl -fsSL "${FFMPEG_VERSION_URL}" | tr -d '[:space:]')"
+    fi
+    if [ -z "${FFMPEG_VERSION}" ]; then
+        echo "ERROR: failed to resolve FFMPEG version (build_data + ${FFMPEG_VERSION_URL})" >&2
+        exit 1
     fi
 
-    # Copy remaining lib files
-    if [ -d "/usr/share/jellyfin-ffmpeg/lib" ]; then
-        rsync -avh --remove-source-files /usr/share/jellyfin-ffmpeg/lib/ "${LIB_DIRECTORY}/"
-        rm -vrf /usr/share/jellyfin-ffmpeg/lib
-    fi
+    # Map runtime arch to iSpy tarball arch
+    case "$(arch)" in
+        'aarch64' | 'arm64')
+            FFMPEG_ARCH='arm64'
+            ;;
+        'armv7l' | 'armv6l' | 'arm' | 'armhf')
+            FFMPEG_ARCH='armhf'
+            ;;
+        'x86_64' | 'amd64')
+            FFMPEG_ARCH='x86_64'
+            ;;
+        *)
+            echo "ERROR: unsupported arch $(arch)" >&2
+            exit 1
+            ;;
+    esac
 
-    echo "***** Copying FFMPEG Bin Files to Bin destination     *****"
+    FFMPEG_TARBALL="ffmpeg${FFMPEG_VERSION}-linux-${FFMPEG_ARCH}.tar.xz"
+    FFMPEG_URL="${FFMPEG_BASE_URL}/${FFMPEG_TARBALL}"
+    FFMPEG_DEST="${AGENTDVR_DIRECTORY}/ffmpeg${FFMPEG_VERSION}"
 
-    # Copy share files if they exist
-    if [ -d "/usr/share/jellyfin-ffmpeg/share" ]; then
-        rsync -avh --remove-source-files /usr/share/jellyfin-ffmpeg/share/ /usr/bin/share/
-        rm -vrf /usr/share/jellyfin-ffmpeg/share
-    fi
+    echo "***** Downloading ${FFMPEG_URL} *****"
+    mkdir -p "${FFMPEG_DEST}"
+    curl -fsSL "${FFMPEG_URL}" -o /tmp/ffmpeg.tar.xz
 
-    # Copy remaining files
-    if [ -d "/usr/share/jellyfin-ffmpeg" ]; then
-        rsync -avh --remove-source-files /usr/share/jellyfin-ffmpeg/ /usr/bin/
-        rm -vrf /usr/share/jellyfin-ffmpeg
-    fi
+    echo "***** Extracting to ${FFMPEG_DEST} *****"
+    # Tarball top-level is bin/ and lib/ -> ffmpeg<VER>/bin, ffmpeg<VER>/lib
+    tar -xJf /tmp/ffmpeg.tar.xz -C "${FFMPEG_DEST}"
+    rm -vf /tmp/ffmpeg.tar.xz
 
-    ln -sfv /usr/bin/ffprobe "${LIB_DIRECTORY}/"
-    ln -sfv /usr/bin/ffmpeg "${LIB_DIRECTORY}/"
-    ln -sfv /usr/bin/vainfo "${LIB_DIRECTORY}/"
-
-    echo "**** Jellyfin FFMPEG installation completed ****"
+    echo "**** iSpy FFMPEG installation completed (${FFMPEG_DEST}) ****"
 }
 
 main() {
-    case $(arch) in
-        'arm' | 'armv6l' | 'armv7l' )
-            default_ffmpeg
-            FFMPEG_VERSION=$(apt-cache policy ffmpeg | grep -oP 'Candidate: \K[^ ]+' | sed 's/^[0-9]\+://')
-            ;;
-        *)
-            if [ -f /resources/build_data/JELLYFIN_FFMPEG_VERSION ]; then
-                jellyfin_ffmpeg
-                FFMPEG_VERSION=$(apt-cache policy "jellyfin-ffmpeg${JELLYFIN_FFMPEG_MAJOR_VERSION}" | grep -oP 'Candidate: \K[^ ]+' | sed 's/^[0-9]\+://')
-            else
-                default_ffmpeg
-                FFMPEG_VERSION=$(apt-cache policy ffmpeg | grep -oP 'Candidate: \K[^ ]+' | sed 's/^[0-9]\+://')
-            fi
-            ;;
-    esac
+    ispy_ffmpeg
+
+    mkdir -p /usr/bin/share
     touch /usr/bin/share/ffmpeg_version
-	echo "FFMPEG_VERSION=\"$FFMPEG_VERSION\"" > /usr/bin/share/ffmpeg_version
+    echo "FFMPEG_VERSION=\"$FFMPEG_VERSION\"" > /usr/bin/share/ffmpeg_version
 }
 
 main

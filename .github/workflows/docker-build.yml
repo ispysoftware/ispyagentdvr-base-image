@@ -1,14 +1,14 @@
 # =============================================================================
 # ispyagentdvr-base-image Docker Build & Publish
 # =============================================================================
-# Monitors jellyfin/jellyfin-ffmpeg and intel/compute-runtime for new releases.
+# Monitors iSpy FFmpeg (files.ispyconnect.com) and intel/compute-runtime for new releases.
 # Builds multi-arch Docker images when either upstream has a new version.
 #
 # Triggers:
 #   - repository_dispatch (cron-job.org external trigger)
 #   - workflow_dispatch (manual)
 #
-# Variant built: trixie-slim-vlc-jellyfin-ffmpeg-{VER}-intel-{VER}
+# Variant built: trixie-slim-vlc-ispy-ffmpeg-{VER}-intel-{VER}
 # Platforms: linux/amd64, linux/arm64, linux/arm/v7
 # Registries: GHCR + Docker Hub
 #
@@ -38,8 +38,8 @@ on:
           - retag-latest
           - sync-registries
         default: auto-check
-      jellyfin_version:
-        description: 'Override jellyfin-ffmpeg version (e.g. 7.1.3-3)'
+      ffmpeg_version:
+        description: 'Override iSpy FFmpeg version (e.g. 8.1)'
         required: false
         type: string
       compute_version:
@@ -61,7 +61,7 @@ on:
         type: boolean
         default: true
       retag_source:
-        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-jellyfin-ffmpeg-7.1.3-6-intel-25.13.33276.16 (for retag-latest action)'
+        description: 'Existing tag to promote as latest, e.g. trixie-slim-vlc-ispy-ffmpeg-8.1-intel-25.13.33276.16 (for retag-latest action)'
         required: false
         type: string
       push_to_dockerhub:
@@ -157,8 +157,7 @@ jobs:
       packages: read
     outputs:
       should_build: ${{ steps.final-build-decision.outputs.should_build || steps.determine.outputs.should_build }}
-      jellyfin_version: ${{ steps.determine.outputs.jellyfin_version }}
-      jellyfin_major: ${{ steps.determine.outputs.jellyfin_major }}
+      ffmpeg_version: ${{ steps.determine.outputs.ffmpeg_version }}
       compute_version: ${{ steps.determine.outputs.compute_version }}
       igc_version: ${{ steps.determine.outputs.igc_version }}
       image_tag: ${{ steps.determine.outputs.image_tag }}
@@ -213,35 +212,36 @@ jobs:
           ghcr_actor: ${{ github.actor }}
           ghcr_token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Fetch jellyfin-ffmpeg release
-        id: fetch-jellyfin
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Fetch iSpy FFmpeg release
+        id: fetch-ffmpeg
         run: |
           set -euo pipefail
-          echo "::group::Fetching jellyfin/jellyfin-ffmpeg latest release"
+          echo "::group::Fetching iSpy FFmpeg version (files.ispyconnect.com)"
 
-          RELEASE_JSON=$(gh api repos/jellyfin/jellyfin-ffmpeg/releases/latest 2>/dev/null || echo '{}')
+          VERSION_URL="https://files.ispyconnect.com/libs/ffmpeg_version.txt"
+          VERSION=$(curl -fsSL "$VERSION_URL" 2>/dev/null | tr -d '[:space:]' || echo '')
 
-          if [[ "$RELEASE_JSON" == "{}" ]] || [[ "$(echo "$RELEASE_JSON" | jq -r '.tag_name // ""')" == "" ]]; then
-            echo "::warning::Failed to fetch jellyfin-ffmpeg release"
-            echo "tag=" >> "$GITHUB_OUTPUT"
+          if [[ -z "$VERSION" ]]; then
+            echo "::warning::Failed to fetch iSpy FFmpeg version from $VERSION_URL"
             echo "version=" >> "$GITHUB_OUTPUT"
-            echo "has_debs=false" >> "$GITHUB_OUTPUT"
+            echo "available=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          TAG=$(echo "$RELEASE_JSON" | jq -r '.tag_name')
-          VERSION=$(echo "$TAG" | sed 's/^v//')
-          MAJOR=$(echo "$VERSION" | cut -d'.' -f1)
+          # Verify prebuilt tarballs exist for every required arch
+          AVAILABLE="true"
+          for A in arm64 armhf x86_64; do
+            URL="https://files.ispyconnect.com/libs/ffmpeg${VERSION}-linux-${A}.tar.xz"
+            CODE=$(curl -fsSL -o /dev/null -I -w '%{http_code}' "$URL" 2>/dev/null || echo "000")
+            if [[ "$CODE" != "200" && "$CODE" != "206" ]]; then
+              echo "::warning::Missing iSpy FFmpeg tarball for $A (HTTP $CODE): $URL"
+              AVAILABLE="false"
+            fi
+          done
 
-          HAS_DEBS=$(echo "$RELEASE_JSON" | jq '[.assets[].name | test("\\.deb$")] | any')
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "major=$MAJOR" >> "$GITHUB_OUTPUT"
-          echo "has_debs=$HAS_DEBS" >> "$GITHUB_OUTPUT"
-          echo "Jellyfin FFmpeg: $VERSION (has .deb: $HAS_DEBS)"
+          echo "available=$AVAILABLE" >> "$GITHUB_OUTPUT"
+          echo "iSpy FFmpeg: $VERSION (tarballs available: $AVAILABLE)"
           echo "::endgroup::"
 
       - name: Fetch intel compute-runtime release
@@ -290,14 +290,14 @@ jobs:
           STATE_JSON=$(gh api "repos/${{ github.repository }}/contents/state.json?ref=pipeline-state" \
             --jq '.content' 2>/dev/null | base64 -d 2>/dev/null || echo '{}')
 
-          STORED_JELLYFIN=$(echo "$STATE_JSON" | jq -r '.jellyfin_version // ""')
+          STORED_FFMPEG=$(echo "$STATE_JSON" | jq -r '.ffmpeg_version // ""')
           STORED_COMPUTE=$(echo "$STATE_JSON" | jq -r '.compute_version // ""')
           STORED_IGC=$(echo "$STATE_JSON" | jq -r '.igc_version // ""')
 
-          echo "stored_jellyfin=$STORED_JELLYFIN" >> "$GITHUB_OUTPUT"
+          echo "stored_ffmpeg=$STORED_FFMPEG" >> "$GITHUB_OUTPUT"
           echo "stored_compute=$STORED_COMPUTE" >> "$GITHUB_OUTPUT"
           echo "stored_igc=$STORED_IGC" >> "$GITHUB_OUTPUT"
-          echo "State: jellyfin=$STORED_JELLYFIN compute=$STORED_COMPUTE igc=$STORED_IGC"
+          echo "State: ffmpeg=$STORED_FFMPEG compute=$STORED_COMPUTE igc=$STORED_IGC"
           echo "::endgroup::"
 
       - name: Determine build versions
@@ -305,14 +305,14 @@ jobs:
         env:
           ACTION: ${{ steps.set-action.outputs.action }}
           FORCE_BUILD: ${{ github.event.inputs.force_build || 'false' }}
-          UPSTREAM_JELLYFIN: ${{ steps.fetch-jellyfin.outputs.version }}
+          UPSTREAM_FFMPEG: ${{ steps.fetch-ffmpeg.outputs.version }}
           UPSTREAM_COMPUTE: ${{ steps.fetch-intel.outputs.version }}
           UPSTREAM_IGC: ${{ steps.fetch-intel.outputs.igc_version }}
-          HAS_DEBS: ${{ steps.fetch-jellyfin.outputs.has_debs }}
-          STORED_JELLYFIN: ${{ steps.read-state.outputs.stored_jellyfin }}
+          FFMPEG_AVAILABLE: ${{ steps.fetch-ffmpeg.outputs.available }}
+          STORED_FFMPEG: ${{ steps.read-state.outputs.stored_ffmpeg }}
           STORED_COMPUTE: ${{ steps.read-state.outputs.stored_compute }}
           STORED_IGC: ${{ steps.read-state.outputs.stored_igc }}
-          MANUAL_JELLYFIN: ${{ github.event.inputs.jellyfin_version }}
+          MANUAL_FFMPEG: ${{ github.event.inputs.ffmpeg_version }}
           MANUAL_COMPUTE: ${{ github.event.inputs.compute_version }}
           MANUAL_IGC: ${{ github.event.inputs.igc_version }}
           TAG_AS_LATEST: ${{ github.event.inputs.tag_as_latest || 'true' }}
@@ -324,24 +324,24 @@ jobs:
           SHOULD_BUILD="false"
           LATEST_NEEDS_PROMOTE="false"
 
-          JELLYFIN_VERSION="${MANUAL_JELLYFIN:-$UPSTREAM_JELLYFIN}"
+          FFMPEG_VERSION="${MANUAL_FFMPEG:-$UPSTREAM_FFMPEG}"
           COMPUTE_VERSION="${MANUAL_COMPUTE:-$UPSTREAM_COMPUTE}"
           IGC_VERSION="${MANUAL_IGC:-$UPSTREAM_IGC}"
 
-          JELLYFIN_VERSION="${JELLYFIN_VERSION#v}"
+          FFMPEG_VERSION="${FFMPEG_VERSION#v}"
           COMPUTE_VERSION="${COMPUTE_VERSION#v}"
           IGC_VERSION="${IGC_VERSION#v}"
 
           case "$ACTION" in
             auto-check)
-              JELLYFIN_CHANGED="false"
+              FFMPEG_CHANGED="false"
               COMPUTE_CHANGED="false"
 
-              if [[ -n "$JELLYFIN_VERSION" && "$JELLYFIN_VERSION" != "$STORED_JELLYFIN" && "$HAS_DEBS" == "true" ]]; then
-                echo "Jellyfin FFmpeg changed: $STORED_JELLYFIN → $JELLYFIN_VERSION (has .deb files)"
-                JELLYFIN_CHANGED="true"
-              elif [[ "$HAS_DEBS" != "true" && -n "$JELLYFIN_VERSION" && "$JELLYFIN_VERSION" != "$STORED_JELLYFIN" ]]; then
-                echo "::warning::Jellyfin FFmpeg $JELLYFIN_VERSION has no .deb files — skipping"
+              if [[ -n "$FFMPEG_VERSION" && "$FFMPEG_VERSION" != "$STORED_FFMPEG" && "$FFMPEG_AVAILABLE" == "true" ]]; then
+                echo "iSpy FFmpeg changed: $STORED_FFMPEG → $FFMPEG_VERSION (tarballs available)"
+                FFMPEG_CHANGED="true"
+              elif [[ "$FFMPEG_AVAILABLE" != "true" && -n "$FFMPEG_VERSION" && "$FFMPEG_VERSION" != "$STORED_FFMPEG" ]]; then
+                echo "::warning::iSpy FFmpeg $FFMPEG_VERSION tarballs unavailable — skipping"
               fi
 
               if [[ -n "$COMPUTE_VERSION" && "$COMPUTE_VERSION" != "$STORED_COMPUTE" ]]; then
@@ -349,12 +349,12 @@ jobs:
                 COMPUTE_CHANGED="true"
               fi
 
-              if [[ "$JELLYFIN_CHANGED" == "true" || "$COMPUTE_CHANGED" == "true" ]]; then
+              if [[ "$FFMPEG_CHANGED" == "true" || "$COMPUTE_CHANGED" == "true" ]]; then
                 SHOULD_BUILD="true"
               fi
 
-              if [[ "$JELLYFIN_CHANGED" != "true" && -n "$STORED_JELLYFIN" ]]; then
-                JELLYFIN_VERSION="$STORED_JELLYFIN"
+              if [[ "$FFMPEG_CHANGED" != "true" && -n "$STORED_FFMPEG" ]]; then
+                FFMPEG_VERSION="$STORED_FFMPEG"
               fi
               if [[ "$COMPUTE_CHANGED" != "true" && -n "$STORED_COMPUTE" ]]; then
                 COMPUTE_VERSION="$STORED_COMPUTE"
@@ -366,7 +366,7 @@ jobs:
               if [[ "$TAG_AS_LATEST" == "true" && "$SHOULD_BUILD" == "true" ]]; then
                 LATEST_NEEDS_PROMOTE="true"
               elif [[ "$TAG_AS_LATEST" == "true" ]]; then
-                IMAGE_TAG="${DEBIAN_BASE}-vlc-jellyfin-ffmpeg-${JELLYFIN_VERSION}-intel-${COMPUTE_VERSION}"
+                IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}"
                 GHCR_PREFIX="${{ env.GHCR_REPO }}"
                 VERSION_DIGEST=$(crane digest "${GHCR_PREFIX}:${IMAGE_TAG}" 2>/dev/null || echo "none")
                 LATEST_DIGEST=$(crane digest "${GHCR_PREFIX}:latest" 2>/dev/null || echo "missing")
@@ -384,8 +384,8 @@ jobs:
             promote-latest|force-promote-latest)
               SHOULD_BUILD="false"
               LATEST_NEEDS_PROMOTE="true"
-              if [[ -z "$JELLYFIN_VERSION" && -n "$STORED_JELLYFIN" ]]; then
-                JELLYFIN_VERSION="$STORED_JELLYFIN"
+              if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
+                FFMPEG_VERSION="$STORED_FFMPEG"
               fi
               if [[ -z "$COMPUTE_VERSION" && -n "$STORED_COMPUTE" ]]; then
                 COMPUTE_VERSION="$STORED_COMPUTE"
@@ -407,8 +407,8 @@ jobs:
 
             sync-registries)
               SHOULD_BUILD="false"
-              if [[ -z "$JELLYFIN_VERSION" && -n "$STORED_JELLYFIN" ]]; then
-                JELLYFIN_VERSION="$STORED_JELLYFIN"
+              if [[ -z "$FFMPEG_VERSION" && -n "$STORED_FFMPEG" ]]; then
+                FFMPEG_VERSION="$STORED_FFMPEG"
               fi
               if [[ -z "$COMPUTE_VERSION" && -n "$STORED_COMPUTE" ]]; then
                 COMPUTE_VERSION="$STORED_COMPUTE"
@@ -424,20 +424,16 @@ jobs:
           if [[ "$ACTION" == "retag-latest" ]]; then
             IMAGE_TAG="${RETAG_SOURCE}"
           else
-            IMAGE_TAG="${DEBIAN_BASE}-vlc-jellyfin-ffmpeg-${JELLYFIN_VERSION}-intel-${COMPUTE_VERSION}"
+            IMAGE_TAG="${DEBIAN_BASE}-vlc-ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}"
           fi
 
-          if [[ "$ACTION" != "retag-latest" && ( -z "$JELLYFIN_VERSION" || -z "$COMPUTE_VERSION" || -z "$IGC_VERSION" ) ]]; then
-            echo "::error::Missing required version(s): jellyfin=$JELLYFIN_VERSION compute=$COMPUTE_VERSION igc=$IGC_VERSION"
+          if [[ "$ACTION" != "retag-latest" && ( -z "$FFMPEG_VERSION" || -z "$COMPUTE_VERSION" || -z "$IGC_VERSION" ) ]]; then
+            echo "::error::Missing required version(s): ffmpeg=$FFMPEG_VERSION compute=$COMPUTE_VERSION igc=$IGC_VERSION"
             SHOULD_BUILD="false"
           fi
 
-          JELLYFIN_MAJOR=$(echo "$JELLYFIN_VERSION" | cut -d'.' -f1)
-          JELLYFIN_MAJOR="${JELLYFIN_MAJOR:-7}"
-
           echo "should_build=$SHOULD_BUILD" >> "$GITHUB_OUTPUT"
-          echo "jellyfin_version=$JELLYFIN_VERSION" >> "$GITHUB_OUTPUT"
-          echo "jellyfin_major=$JELLYFIN_MAJOR" >> "$GITHUB_OUTPUT"
+          echo "ffmpeg_version=$FFMPEG_VERSION" >> "$GITHUB_OUTPUT"
           echo "compute_version=$COMPUTE_VERSION" >> "$GITHUB_OUTPUT"
           echo "igc_version=$IGC_VERSION" >> "$GITHUB_OUTPUT"
           echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
@@ -445,7 +441,7 @@ jobs:
           echo "latest_needs_promote=$LATEST_NEEDS_PROMOTE" >> "$GITHUB_OUTPUT"
 
           echo "Build decision: should_build=$SHOULD_BUILD"
-          echo "  jellyfin=$JELLYFIN_VERSION (major=$JELLYFIN_MAJOR)"
+          echo "  ffmpeg=$FFMPEG_VERSION"
           echo "  compute=$COMPUTE_VERSION"
           echo "  igc=$IGC_VERSION"
           echo "  tag=$IMAGE_TAG"
@@ -597,8 +593,7 @@ jobs:
         id: prepare
         if: steps.check-tag.outputs.skip_build != 'true'
         env:
-          JELLYFIN_VERSION: ${{ needs.check-releases.outputs.jellyfin_version }}
-          JELLYFIN_MAJOR: ${{ needs.check-releases.outputs.jellyfin_major }}
+          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
           COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
           IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
@@ -608,8 +603,7 @@ jobs:
 
           mkdir -p resources/build_data
           echo "${DEFAULT_BASE_IMAGE}" > resources/build_data/BASE_IMAGE
-          echo "${JELLYFIN_VERSION}" > resources/build_data/JELLYFIN_FFMPEG_VERSION
-          echo "${JELLYFIN_MAJOR}" > resources/build_data/JELLYFIN_FFMPEG_MAJOR_VERSION
+          echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
           echo "${COMPUTE_VERSION}" > resources/build_data/COMPUTE_VERSION
           echo "${IGC_VERSION}" > resources/build_data/IGC_VERSION
           touch resources/build_data/vlc
@@ -1053,7 +1047,7 @@ jobs:
 
       - name: Write state
         env:
-          JELLYFIN_VERSION: ${{ needs.check-releases.outputs.jellyfin_version }}
+          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
           COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
           IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
@@ -1061,7 +1055,7 @@ jobs:
           set -euo pipefail
           cat > state.json <<EOF
           {
-            "jellyfin_version": "${JELLYFIN_VERSION}",
+            "ffmpeg_version": "${FFMPEG_VERSION}",
             "compute_version": "${COMPUTE_VERSION}",
             "igc_version": "${IGC_VERSION}",
             "image_tag": "${IMAGE_TAG}",
@@ -1069,7 +1063,7 @@ jobs:
           }
           EOF
 
-          echo "${JELLYFIN_VERSION}" > jellyfin-ffmpeg-version
+          echo "${FFMPEG_VERSION}" > ffmpeg-version
           echo "${COMPUTE_VERSION}" > compute-runtime-version
           echo "${IGC_VERSION}" > igc-version
           date -u +'%Y-%m-%dT%H:%M:%SZ' > last-built-time
@@ -1115,7 +1109,7 @@ jobs:
       - name: Update resource files
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
-          JELLYFIN_VERSION: ${{ needs.check-releases.outputs.jellyfin_version }}
+          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
           COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
           IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
         run: |
@@ -1124,7 +1118,7 @@ jobs:
 
           echo "${IMAGE_TAG}" > resources/tag
           date -u +'%Y-%m-%dT%H:%M:%SZ' > resources/build-timestamp
-          echo "${JELLYFIN_VERSION}" > resources/build_data/JELLYFIN_FFMPEG_VERSION
+          echo "${FFMPEG_VERSION}" > resources/build_data/FFMPEG_VERSION
           echo "${COMPUTE_VERSION}" > resources/build_data/COMPUTE_VERSION
           echo "${IGC_VERSION}" > resources/build_data/IGC_VERSION
 
@@ -1164,7 +1158,7 @@ jobs:
       - name: Update version in README
         env:
           IMAGE_TAG: ${{ needs.check-releases.outputs.image_tag }}
-          JELLYFIN_VERSION: ${{ needs.check-releases.outputs.jellyfin_version }}
+          FFMPEG_VERSION: ${{ needs.check-releases.outputs.ffmpeg_version }}
           COMPUTE_VERSION: ${{ needs.check-releases.outputs.compute_version }}
           IGC_VERSION: ${{ needs.check-releases.outputs.igc_version }}
         run: |
@@ -1174,7 +1168,7 @@ jobs:
             exit 0
           fi
 
-          sed -i "s|jellyfin-ffmpeg-[0-9.]*-[0-9]*-intel-[0-9.]*|jellyfin-ffmpeg-${JELLYFIN_VERSION}-intel-${COMPUTE_VERSION}|g" README.md
+          sed -i "s|ispy-ffmpeg-[0-9.]*-intel-[0-9.]*|ispy-ffmpeg-${FFMPEG_VERSION}-intel-${COMPUTE_VERSION}|g" README.md
           sed -i "s|IGC_VERSION=.*|IGC_VERSION=${IGC_VERSION}|g" README.md 2>/dev/null || true
 
       - name: Commit and push

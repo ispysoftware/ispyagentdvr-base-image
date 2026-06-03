@@ -15,7 +15,7 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-i
     ncurses-bin \
     alsa-utils \
     curl \
-    rsync \
+    xz-utils \
     unzip \
     wget \
     openssl \
