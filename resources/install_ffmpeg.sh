@@ -47,7 +47,7 @@ ispy_ffmpeg() {
 
     echo "***** Extracting to ${FFMPEG_DEST} *****"
     # Tarball top-level is bin/ and lib/ -> ffmpeg<VER>/bin, ffmpeg<VER>/lib
-    tar -xJf /tmp/ffmpeg.tar.xz -C "${FFMPEG_DEST}"
+    tar -vxJf /tmp/ffmpeg.tar.xz -C "${FFMPEG_DEST}"
     rm -vf /tmp/ffmpeg.tar.xz
 
     echo "**** iSpy FFMPEG installation completed (${FFMPEG_DEST}) ****"
