@@ -20,6 +20,20 @@ amd64_driver(){
     # variant, plus i965 for pre-Broadwell. This is what FFmpeg's VAAPI path
     # actually loads for Intel QuickSync - the OpenCL compute-runtime
     # previously installed here was never used by FFmpeg (no --enable-opencl).
+    #
+    # The non-free driver lives in Debian's non-free component, which the base
+    # image only enables for sid. The sid build drags an unsatisfiable
+    # dependency chain (newer libva2/libigdgmm12 blocked by the sid pin), so
+    # enable non-free on the release's own sources and install the stable
+    # build. Editing the existing sources in place avoids Signed-By conflicts
+    # with a duplicate source definition.
+    if [ -f /etc/apt/sources.list.d/debian.sources ]; then
+        sed -i 's/^Components: .*/Components: main contrib non-free non-free-firmware/' /etc/apt/sources.list.d/debian.sources
+    elif [ -f /etc/apt/sources.list ]; then
+        sed -i -E 's/^(deb[^#]*main)[[:space:]]*$/\1 contrib non-free non-free-firmware/' /etc/apt/sources.list
+    fi
+    apt-get update
+
     echo "Installing Intel VAAPI drivers:"
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends --no-install-suggests \
     intel-media-va-driver-non-free || \
